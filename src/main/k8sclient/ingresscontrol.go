@@ -14,14 +14,12 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
 
-//IngressInform reacts to changed services
-func IngressInform(ctx context.Context, kubeClient kubernetes.Interface, mongoClient *mongo.Client, mongodbDatabase string, mongodbCollection string) {
+//IngressInform reacts to changed ingresses
+func IngressInform(ctx context.Context, factory informers.SharedInformerFactory, mongoClient *mongo.Client, mongodbDatabase string, mongodbCollection string) {
 
-	factory := informers.NewSharedInformerFactory(kubeClient, 0)
 	informer := factory.Networking().V1().Ingresses().Informer()
 
 	stopper := make(chan struct{})
@@ -86,8 +84,8 @@ func onIngAdd(ctx context.Context, obj interface{}, mongoClient *mongo.Client, m
 						newService := model.Service{
 							ServiceName:   addedIngressRuleServiceName,
 							IngressRules:  []model.IngressRule{addedIngressRuleAsStruct},
-							ServiceOnline: false,
-							IngressOnline: true,
+							ServiceExists: false,
+							IngressExists: true,
 						}
 
 						_, err := serviceCollection.InsertOne(ctx, newService)
@@ -114,7 +112,7 @@ func onIngAdd(ctx context.Context, obj interface{}, mongoClient *mongo.Client, m
 					update := bson.M{
 						"$set": bson.M{
 							"ingressRules":  append(decodedServiceFromDatabase.IngressRules, addedIngressRuleAsStruct),
-							"ingressOnline": true,
+							"ingressExists": true,
 						}}
 					after := options.After
 					upsert := false
@@ -202,12 +200,12 @@ func onIngDelete(ctx context.Context, obj interface{}, mongoClient *mongo.Client
 
 					if len(newIngressRulesForService) == 0 {
 
-						if decodedServiceFromDatabase.ServiceOnline {
+						if decodedServiceFromDatabase.ServiceExists {
 
 							update := bson.M{
 								"$set": bson.M{
 									"ingressRules":  newIngressRulesForService,
-									"ingressOnline": false,
+									"ingressExists": false,
 								}}
 
 							_ = serviceCollection.FindOneAndUpdate(ctx, filter, update)

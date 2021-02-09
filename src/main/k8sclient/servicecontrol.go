@@ -12,51 +12,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
 
-//InitServices adds all already existing services to the database
-func InitServices(ctx context.Context, kubeClient kubernetes.Interface, mongoClient *mongo.Client, mongodbDatabase string, mongodbCollection string) {
-
-	options := metav1.ListOptions{
-		LabelSelector: "clusterPortalShow=true",
-	}
-
-	svcList, err := kubeClient.CoreV1().Services("").List(ctx, options)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to get running services from kubernetes cluster")
-	}
-
-	if len((*svcList).Items) == 0 {
-		log.Info().Msgf("Found no services to show on portal")
-	} else {
-
-		for _, svcInfo := range (*svcList).Items {
-
-			svc := model.Service{
-				ServiceName:   svcInfo.Name,
-				Category:      svcInfo.GetLabels()["clusterPortalCategory"],
-				ServiceOnline: true,
-			}
-
-			_, err := mongoClient.Database(mongodbDatabase).Collection(mongodbCollection).InsertOne(ctx, svc)
-			if err != nil {
-				log.Fatal().Err(err).Msg("Failed to insert service into mongodb")
-			}
-			log.Info().Msgf("added the service %v to the database", svcInfo.Name)
-		}
-	}
-
-}
-
 //ServiceInform reacts to changed services
-func ServiceInform(ctx context.Context, kubeClient kubernetes.Interface, mongoClient *mongo.Client, mongodbDatabase string, mongodbCollection string) {
-
-	factory := informers.NewSharedInformerFactory(kubeClient, 0)
+func ServiceInform(ctx context.Context, factory informers.SharedInformerFactory, mongoClient *mongo.Client, mongodbDatabase string, mongodbCollection string) {
 
 	informer := factory.Core().V1().Services().Informer()
 
@@ -100,7 +62,7 @@ func onSvcAdd(ctx context.Context, obj interface{}, mongoClient *mongo.Client, m
 		filter := bson.M{"serviceName": newService.Name}
 		update := bson.M{
 			"$set": bson.M{
-				"serviceOnline": true,
+				"serviceExists": true,
 				"category":      newServiceLabels["clusterPortalCategory"],
 			}}
 		after := options.After
@@ -117,7 +79,7 @@ func onSvcAdd(ctx context.Context, obj interface{}, mongoClient *mongo.Client, m
 				svc := model.Service{
 					ServiceName:   newService.Name,
 					Category:      newServiceLabels["clusterPortalCategory"],
-					ServiceOnline: true,
+					ServiceExists: true,
 				}
 
 				_, err := serviceCollection.InsertOne(ctx, svc) //TODO Parameterize
@@ -177,9 +139,9 @@ func onSvcDelete(ctx context.Context, obj interface{}, mongoClient *mongo.Client
 				log.Fatal().Err(err).Msg("Failed marshalling service that should be deleted from database")
 			}
 
-			if svc.IngressOnline {
+			if svc.IngressExists {
 
-				update := bson.M{"$set": bson.M{"serviceOnline": false}}
+				update := bson.M{"$set": bson.M{"serviceExists": false}}
 
 				_ = serviceCollection.FindOneAndUpdate(ctx, filter, update)
 
